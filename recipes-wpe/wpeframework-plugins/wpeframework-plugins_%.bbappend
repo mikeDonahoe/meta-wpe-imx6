@@ -1,7 +1,2 @@
-def replaceVar(pkgconfig,needle, replace):
-    pkgconfig = pkgconfig.replace(needle, replace)
-    return pkgconfig
-
-
-
+#bluetooth is causing issues
 PACKAGECONFIG_remove = "bluetooth"
