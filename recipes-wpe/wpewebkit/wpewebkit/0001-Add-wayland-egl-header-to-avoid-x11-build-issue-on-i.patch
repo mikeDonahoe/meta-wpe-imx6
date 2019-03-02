@@ -1,0 +1,37 @@
+From 50e15a8d2009fb02f7d108063f7777b03297a930 Mon Sep 17 00:00:00 2001
+From: Michael Donahoe <michael.donahoe@systematicgroup.com>
+Date: Sat, 2 Mar 2019 16:28:13 +0000
+Subject: [PATCH] Add wayland-egl header to avoid x11 build issue on imx6
+
+---
+ Source/WebCore/platform/graphics/epoxy/EpoxyEGL.h              | 1 +
+ Source/WebKit/WebProcess/WebPage/wpe/AcceleratedSurfaceWPE.cpp | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/Source/WebCore/platform/graphics/epoxy/EpoxyEGL.h b/Source/WebCore/platform/graphics/epoxy/EpoxyEGL.h
+index 941f858..b58bcd7 100644
+--- a/Source/WebCore/platform/graphics/epoxy/EpoxyEGL.h
++++ b/Source/WebCore/platform/graphics/epoxy/EpoxyEGL.h
+@@ -28,6 +28,7 @@
+ #if !USE(GLX)
+ // This define is used in mesa and other GL implementations to exclude X11 headers.
+ #define MESA_EGL_NO_X11_HEADERS 1
++#include <wayland-egl.h>
+ #endif
+ 
+ #include <epoxy/egl.h>
+diff --git a/Source/WebKit/WebProcess/WebPage/wpe/AcceleratedSurfaceWPE.cpp b/Source/WebKit/WebProcess/WebPage/wpe/AcceleratedSurfaceWPE.cpp
+index 54a7a4a..5003045 100644
+--- a/Source/WebKit/WebProcess/WebPage/wpe/AcceleratedSurfaceWPE.cpp
++++ b/Source/WebKit/WebProcess/WebPage/wpe/AcceleratedSurfaceWPE.cpp
+@@ -31,6 +31,7 @@
+ #if !USE(GLX)
+ // This define is used in mesa and other GL implementations to exlcude X11 headers.
+ #define MESA_EGL_NO_X11_HEADERS 1
++#include <wayland-egl.h>
+ #endif
+ #include <wpe/wpe-egl.h>
+ 
+-- 
+2.7.4
+

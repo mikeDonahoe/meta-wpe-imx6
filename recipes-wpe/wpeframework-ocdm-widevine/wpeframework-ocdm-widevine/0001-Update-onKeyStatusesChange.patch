@@ -1,0 +1,25 @@
+From a94a9e194d0dd28361d7abd64e389322e8c3c0fa Mon Sep 17 00:00:00 2001
+From: Michael Donahoe <michael.donahoe@systematicgroup.com>
+Date: Tue, 12 Feb 2019 19:50:17 +0000
+Subject: [PATCH 1/1] Update onKeyStatusesChange
+
+---
+ MediaSystem.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/MediaSystem.cpp b/MediaSystem.cpp
+index fdba5b2..de949df 100644
+--- a/MediaSystem.cpp
++++ b/MediaSystem.cpp
+@@ -170,7 +170,7 @@ public:
+         _adminLock.Unlock();
+     }
+ 
+-    virtual void onKeyStatusesChange(const std::string& session_id) {
++    virtual void onKeyStatusesChange(const std::string& session_id, bool has_new_usable_key) {
+ 
+         _adminLock.Lock();
+ 
+-- 
+2.7.4
+
