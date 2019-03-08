@@ -1,0 +1,479 @@
+From 264ac3098383d860c977e2e4bd3a2531ddb14411 Mon Sep 17 00:00:00 2001
+From: Michael Donahoe <michael.donahoe@systematicgroup.com>
+Date: Fri, 8 Mar 2019 01:07:41 +0000
+Subject: [PATCH 2/2] Use curl for provisioning.
+
+---
+ CMakeLists.txt         |  28 ++++++++-----
+ CurlPost.cpp           |  68 +++++++++++++++++++++++++++++++
+ CurlPost.h             |  16 ++++++++
+ HostImplementation.cpp | 108 +++++++++++++++++++++++++++++++++++--------------
+ MediaSession.cpp       |  26 ++++++++----
+ MediaSession.h         |   3 +-
+ MediaSystem.cpp        |  11 ++---
+ 7 files changed, 205 insertions(+), 55 deletions(-)
+ create mode 100644 CurlPost.cpp
+ create mode 100644 CurlPost.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9c5e5ba..815fde4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,6 +1,10 @@
+ cmake_minimum_required(VERSION 3.7)
+ 
+-include(${CMAKE_SYSROOT}/usr/include/cmake/WPEFramework.cmake)
++#include(${CMAKE_SYSROOT}/usr/include/cmake/WPEFramework.cmake)
++#include(${CMAKE_SYSROOT}/usr/include/WPEFramework/cmake/CompileSettings.cmake)
++find_package(WPEFramework REQUIRED)
++find_package(${NAMESPACE}Plugins REQUIRED)
++find_package(PkgConfig REQUIRED)
+ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+ 
+ set(PLUGIN_NAME Widevine)
+@@ -9,21 +13,27 @@ set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
+ message("Setting up ${PLUGIN_NAME}")
+ 
+ # This contains all kinds of plugins (publicely available, so they all need the plugin support library !!
+-find_package(Plugins REQUIRED)
+-find_package(WideVine REQUIRED)
+-
++#find_package(Plugins REQUIRED)
++#find_package(WideVine REQUIRED)
++pkg_check_modules (WIDEVINE widevine)
++pkg_check_modules (WPEFRAMEWORK WPEFrameworkCore)
++pkg_check_modules (CURL libcurl)
+ set(PLUGIN_SOURCES
+     HostImplementation.cpp
+-    DeviceCertificate.cpp
+     MediaSession.cpp
++    DeviceCertificate.cpp
++    CurlPost.cpp 
+     MediaSystem.cpp)
+ 
++message (STATUS ${WPEFRAMEWORK_INCLUDE_DIRS})
++message (STATUS ${WPEFRAMEWORK_LIBRARIES})
+ # add the library
+-add_library(${PLUGIN_NAME} SHARED ${PLUGIN_SOURCES} ${WIDEVINE_LIBRARIES})
++add_library(${PLUGIN_NAME} SHARED ${PLUGIN_SOURCES})
+ target_compile_definitions(${PLUGIN_NAME} PRIVATE ${WIDEVINE_FLAGS})
+-target_include_directories(${PLUGIN_NAME} PRIVATE ${PLUGINS_INCLUDE_DIR} ${WIDEVINE_INCLUDE_DIRS})
+-target_link_libraries(${PLUGIN_NAME} ${PLUGIN_LIBS})
++target_include_directories(${PLUGIN_NAME} PRIVATE ${WPEFRAMEWORK_INCLUDE_DIRS} ${PLUGINS_INCLUDE_DIR} ${WIDEVINE_INCLUDE_DIRS})
++target_link_libraries(${PLUGIN_NAME} ${PLUGIN_LIBS} ${WIDEVINE_LIBRARIES} ${CURL_LIBRARIES})
+ set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".drm")
+ set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
+ 
+-install(TARGETS ${PLUGIN_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX}/share/WPEFramework/OCDM)
+\ No newline at end of file
++set_target_properties(${PLUGIN_NAME} PROPERTIES LINKER_LANGUAGE CXX)
++install(TARGETS ${PLUGIN_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX}/share/WPEFramework/OCDM)
+diff --git a/CurlPost.cpp b/CurlPost.cpp
+new file mode 100644
+index 0000000..a856556
+--- /dev/null
++++ b/CurlPost.cpp
+@@ -0,0 +1,68 @@
++#include "CurlPost.h"
++
++
++size_t CurlPost::CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmemb, std::string *s)
++{
++    size_t newLength = size*nmemb;
++    try
++    {
++        s->append((char*)contents, newLength);
++    }
++    catch(std::bad_alloc &e)
++    {
++        //handle memory problem
++        return 0;
++    }
++    return newLength;
++}
++
++CurlPost::CurlPost():
++    m_curl(NULL)
++{
++    curl_global_init(CURL_GLOBAL_DEFAULT);
++
++    m_curl = curl_easy_init();
++}
++
++CurlPost::~CurlPost()
++{
++    if(m_curl)
++    {
++        curl_easy_cleanup(m_curl);
++        m_curl = NULL;
++    }
++}
++
++std::string CurlPost::post(const std::string url)
++{
++    std::string response;
++    CURLcode res;
++
++    if(m_curl)
++    {
++        curl_easy_setopt(m_curl, CURLOPT_URL, url.c_str());
++        curl_easy_setopt(m_curl, CURLOPT_POST, 1L);
++ 	curl_easy_setopt(m_curl, CURLOPT_POSTFIELDS, "");
++        curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYPEER, 0L); //only for https
++        curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYHOST, 0L); //only for https
++        curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, CurlWrite_CallbackFunc_StdString);
++        curl_easy_setopt(m_curl, CURLOPT_USERAGENT, "User-Agent: Widevine CDM v1.0");
++        curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &response);
++        curl_easy_setopt (m_curl, CURLOPT_VERBOSE, 1L); //remove this to disable verbose output
++
++
++        /* Perform the request, res will get the return code */
++        res = curl_easy_perform(m_curl);
++        /* Check for errors */
++        if(res != CURLE_OK)
++        {
++            fprintf(stderr, "curl_easy_perform() failed: %s\n",
++                    curl_easy_strerror(res));
++        }
++    }
++    else {
++        fprintf(stderr, "Curl is not initialized for url %s\n",url.c_str());
++    }
++
++    return response;
++}
+diff --git a/CurlPost.h b/CurlPost.h
+new file mode 100644
+index 0000000..ab4df7c
+--- /dev/null
++++ b/CurlPost.h
+@@ -0,0 +1,16 @@
++#include <iostream>
++#include <string>
++#include <curl/curl.h>
++
++class CurlPost
++{
++public:
++	CurlPost();
++	~CurlPost();
++	std::string post(const std::string url);
++private:
++	CURL *m_curl;
++    CURLcode m_res;
++
++    static size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmemb, std::string *s);
++};
+\ No newline at end of file
+diff --git a/HostImplementation.cpp b/HostImplementation.cpp
+index 7972038..cc0dfd4 100644
+--- a/HostImplementation.cpp
++++ b/HostImplementation.cpp
+@@ -1,5 +1,6 @@
+ #include "HostImplementation.h"
+ #include "DeviceCertificate.h"
++#include <fstream>
+ 
+ using namespace widevine;
+ using namespace WPEFramework;
+@@ -11,7 +12,7 @@ namespace {
+ namespace CDMi {
+ 
+ HostImplementation::HostImplementation() 
+-  : _saveDeviceCert(false)
++  : _saveDeviceCert(true)
+   , _timer(Core::Thread::DefaultStackSize(),  _T("widevine"))
+   , _files() {
+   Reset();
+@@ -22,10 +23,6 @@ HostImplementation::~HostImplementation() {
+ 
+ void HostImplementation::Reset() {
+ 
+-  _saveDeviceCert = false;
+-
+-  _files.clear();
+-  _files[kCertificateFilename.c_str()] = std::string(reinterpret_cast<const char*>(kDeviceCert), kDeviceCertSize);
+ }
+ 
+ int HostImplementation::NumTimers() const { 
+@@ -35,53 +32,102 @@ int HostImplementation::NumTimers() const {
+ // widevine::Cdm::IStorage implementation
+ // ---------------------------------------------------------------------------
+ /* virtual */ bool HostImplementation::read(const std::string& name, std::string* data) {
+-  StorageMap::iterator it = _files.find(name);
+-  bool ok = it != _files.end();
+-  TRACE_L1("read file: %s: %s", name.c_str(), ok ? "ok" : "fail");
+-  if (!ok) return false;
+-  *data = it->second;
++  int strsize = 0;
++  FILE *fptr = NULL;
++  char fullPath[512];
++  bool retval = false;
++  std::ifstream ifs;
++  std::stringstream strStream;
++
++  if(!exists(name))
++  {
++     fprintf(stderr, "read call for file that does not exist %s\n",name.c_str());
++     return false;
++  }
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  ifs.open(fullPath,std::ofstream::out);
++  if(ifs.is_open())
++  {
++    strStream << ifs.rdbuf();
++    *data = strStream.str();
++    ifs.close();
++  }
++
+   return true;
+ }
+ 
+ /* virtual */ bool HostImplementation::write(const std::string& name, const std::string& data) {
++  char fullPath[256]
+   TRACE_L1("write file: %s", name.c_str());
+-  _files[name] = data;
+-  if (_saveDeviceCert && kCertificateFilename.compare(name) == 0) {
+-    _saveDeviceCert = false;
++
++  std::ofstream ofs;
++
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  fprintf(stderr, "IStorage write %s\n",name.c_str());
++  ofs.open(fullPath,std::ofstream::out);
++  if(ofs.is_open())
++  {
++     ofs << data;
++     ofs.close();
+   }
++
+   return true;
+ }
+ 
+ /* virtual */ bool HostImplementation::exists(const std::string& name) {
+-  StorageMap::iterator it = _files.find(name);
+-  bool ok = it != _files.end();
+-  TRACE_L1("exists? %s: %s", name.c_str(), ok ? "true" : "false");
+-  return ok;
++  struct stat buffer;
++  char fullPath[512];
++  bool exists = false;
++
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  exists = (stat (fullPath, &buffer) == 0);
++  fprintf(stderr, "Widevine exists %s %d\n",fullPath, exists);
++  return exists;
+ }
+ 
+ /* virtual */ bool HostImplementation::remove(const std::string& name) {
+   TRACE_L1("remove: %s", name.c_str());
+-  if (name.empty()) {
+-    // If no name, delete all files (see DeviceFiles::DeleteAllFiles())
+-    _files.clear();
+-  } else {
+-    _files.erase(name);
+-  }
+-  return true;
++  char fullPath[512];
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  fprintf(stderr, "Widevine remove %s\n",fullPath);
++
++  if (!exists(name)) return false;
++  return (remove(fullPath) == 0);
++
+ }
+ 
+ /* virtual */ int32_t HostImplementation::size(const std::string& name) {
+-  StorageMap::iterator it = _files.find(name);
+-  if (it == _files.end()) return -1;
+-  return it->second.size();
++  int size = 0;
++  FILE *fptr = NULL;
++  char fullPath[512];
++ 
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  fptr = fopen(fullPath, "r");
++
++  if(fptr != NULL)
++  {
++     fseek(fptr,0,SEEK_END);
++     size = (int)ftell(fptr);
++     fclose(fptr);
++  }
++
++   fprintf(stderr, "Istorage fileSize %s %d\n",fullPath, size);
++
++   return size;
++
+ }
+ 
+ /* virtual */ bool HostImplementation::list(std::vector<std::string>* names) {
+-  names->clear();
+-  for (StorageMap::iterator it = _files.begin(); it != _files.end(); it++) {
+-      names->push_back(it->first);
+-  }
++  DIR* dirp = opendir("/widevine/istorage/");
++  struct dirent * dp;
++  
++   while ((dp = readdir(dirp)) != NULL) {
++          fprintf(stderr, "List name %s\n",dp->d_name);
++          names->push_back(dp->d_name);
++    }
++  closedir(dirp);
+   return true;
++
+ }
+ 
+ // widevine::Cdm::IClock implementation
+diff --git a/MediaSession.cpp b/MediaSession.cpp
+index 71e8f68..12849df 100644
+--- a/MediaSession.cpp
++++ b/MediaSession.cpp
+@@ -28,7 +28,6 @@
+ #include <sys/utsname.h>
+ 
+ #define NYI_KEYSYSTEM "keysystem-placeholder"
+-
+ using namespace std;
+ 
+ namespace CDMi {
+@@ -72,11 +71,11 @@ void MediaKeySession::onMessage(widevine::Cdm::MessageType f_messageType, const
+   {
+     destUrl.assign(kLicenseServer); 
+     widevine::Cdm::MessageType messageType = widevine::Cdm::kLicenseRequest;
+-
++    fprintf(stderr, "Widevine kLicenseRequest \n");
+     // FIXME: Errrr, this is weird.
+-    //if ((Cdm::MessageType)f_message[1] == (Cdm::kIndividualizationRequest + 1)) {
+-    //  LOGI("switching message type to kIndividualizationRequest");
+-    //  messageType = Cdm::kIndividualizationRequest;
++    //if ((widevine::Cdm::MessageType)f_message[1] == (widevine::Cdm::kIndividualizationRequest + 1)) {
++    //  fprintf(stderr,"switching message type to kIndividualizationRequest");
++    //  messageType = widevine::Cdm::kIndividualizationRequest;
+     //}
+     
+     message = std::to_string(messageType) + ":Type:";
+@@ -121,12 +120,15 @@ void MediaKeySession::onKeyStatusChange()
+ {
+     widevine::Cdm::KeyStatusMap map;
+     if (widevine::Cdm::kSuccess != m_cdm->getKeyStatuses(m_sessionId, &map))
++    {
++ 	fprintf(stderr, "getKeyStatuses error\n");
+         return;
++    }
+ 
+     for (const auto& pair : map) {
+         const std::string& keyValue = pair.first;
+         widevine::Cdm::KeyStatus keyStatus = pair.second;
+-
++        fprintf(stderr, "onKeyStatusChange\n");
+         m_piCallback->OnKeyStatusUpdate(widevineKeyStatusToCString(keyStatus),
+                                         reinterpret_cast<const uint8_t*>(keyValue.c_str()),
+                                         keyValue.length());
+@@ -158,6 +160,7 @@ void MediaKeySession::onKeyStatusError(widevine::Cdm::Status status) {
+     errorStatus = "UnExpectedError";
+     break;
+   }
++  fprintf(stderr, "onKeyStatusError %s\n",errorStatus);
+   m_piCallback->OnKeyError(0, CDMi_S_FALSE, errorStatus.c_str());
+ }
+ 
+@@ -177,7 +180,11 @@ void MediaKeySession::onRemoveComplete() {
+ void MediaKeySession::onDeferredComplete(widevine::Cdm::Status) {
+ }
+ 
+-void MediaKeySession::onDirectIndividualizationRequest(const string&) {
++void MediaKeySession::onDirectIndividualizationRequest(const string &message) 
++{
++   std::string uri = kCpProductionProvisioningServerUrl + "&signedRequest=" + message;
++   std::string response = m_curl.post(uri);  
++   m_cdm->handleProvisioningResponse(response);   
+ }
+ 
+ CDMi_RESULT MediaKeySession::Load(void) {
+@@ -196,7 +203,12 @@ void MediaKeySession::Update(
+   std::string keyResponse(reinterpret_cast<const char*>(f_pbKeyMessageResponse),
+       f_cbKeyMessageResponse);
+   if (widevine::Cdm::kSuccess != m_cdm->update(m_sessionId, keyResponse))
++  { 
++     fprintf(stderr,"cdm->update success\n");
+      onKeyStatusChange();
++  } else {
++     fprintf(stderr,"cdm->update error\n");
++  }
+ }
+ 
+ CDMi_RESULT MediaKeySession::Remove(void) {
+diff --git a/MediaSession.h b/MediaSession.h
+index c9b2c50..d64d4c2 100644
+--- a/MediaSession.h
++++ b/MediaSession.h
+@@ -19,7 +19,7 @@
+ 
+ #include <cdm.h>
+ #include <cdmi.h>
+-
++#include "CurlPost.h"
+ namespace CDMi
+ {
+ class MediaKeySession : public IMediaKeySession
+@@ -97,6 +97,7 @@ private:
+     std::string m_sessionId;
+     IMediaKeySessionCallback *m_piCallback;
+     uint8_t m_IV[16];
++    CurlPost m_curl;
+ };
+ 
+ }  // namespace CDMi
+diff --git a/MediaSystem.cpp b/MediaSystem.cpp
+index fdba5b2..9e74f5b 100644
+--- a/MediaSystem.cpp
++++ b/MediaSystem.cpp
+@@ -17,7 +17,6 @@
+ 
+ #include "MediaSession.h"
+ #include "HostImplementation.h"
+-
+ #include <assert.h>
+ #include <iostream>
+ #include <sstream>
+@@ -61,9 +60,8 @@ public:
+         client_info.build_info = __DATE__;
+ 
+         // widevine::Cdm::DeviceCertificateRequest cert_request;
+-
+         if (widevine::Cdm::kSuccess == widevine::Cdm::initialize(
+-                widevine::Cdm::kNoSecureOutput, client_info, &_host, &_host, &_host, static_cast<widevine::Cdm::LogLevel>(0))) {
++                widevine::Cdm::kNoSecureOutput, client_info, &_host, &_host, &_host, static_cast<widevine::Cdm::LogLevel>(3))) {
+ 	    // Setting the last parameter to true, requres serviceCertificates so the requests can be encrypted. Currently badly supported
+             // in the EME tests, so turn of for now :-)
+             _cdm = widevine::Cdm::create(this, &_host, false);
+@@ -170,10 +168,10 @@ public:
+         _adminLock.Unlock();
+     }
+ 
+-    virtual void onKeyStatusesChange(const std::string& session_id) {
++    virtual void onKeyStatusesChange(const std::string& session_id, bool has_new_usable_key) {
+ 
+         _adminLock.Lock();
+-
++	fprintf(stderr,"onKeyStatusesChange %d\n",has_new_usable_key);
+         SessionMap::iterator index (_sessions.find(session_id));
+ 
+         if (index != _sessions.end()) index->second->onKeyStatusChange();
+@@ -208,11 +206,10 @@ public:
+     virtual void onDirectIndividualizationRequest(const std::string& session_id, const std::string& request) {
+ 
+         _adminLock.Lock();
+-
++        std::string initData;
+         SessionMap::iterator index (_sessions.find(session_id));
+ 
+         if (index != _sessions.end()) index->second->onDirectIndividualizationRequest(request);
+-
+         _adminLock.Unlock();
+     }
+ 
+-- 
+2.7.4
+
