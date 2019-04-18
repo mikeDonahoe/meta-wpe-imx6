@@ -1,0 +1,40 @@
+From c79de48c98c635327a0cb3a4989d8712fec7b3dc Mon Sep 17 00:00:00 2001
+From: Michael Donahoe <michael.donahoe@systematicgroup.com>
+Date: Thu, 18 Apr 2019 04:15:32 +0000
+Subject: [PATCH] NXP Timestamp offset fix
+
+---
+ Source/WebCore/Modules/mediasource/SourceBuffer.cpp | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/Source/WebCore/Modules/mediasource/SourceBuffer.cpp b/Source/WebCore/Modules/mediasource/SourceBuffer.cpp
+index bf7f423..0b35084 100644
+--- a/Source/WebCore/Modules/mediasource/SourceBuffer.cpp
++++ b/Source/WebCore/Modules/mediasource/SourceBuffer.cpp
+@@ -1549,7 +1549,7 @@ void SourceBuffer::sourceBufferPrivateDidReceiveSample(MediaSample& sample)
+         }
+ 
+         // 1.4 If timestampOffset is not 0, then run the following steps:
+-        if (m_timestampOffset) {
++        if (m_timestampOffset && m_mode == AppendMode::Sequence) {
+             // 1.4.1 Add timestampOffset to the presentation timestamp.
+             presentationTimestamp += m_timestampOffset;
+ 
+@@ -1605,10 +1605,13 @@ void SourceBuffer::sourceBufferPrivateDidReceiveSample(MediaSample& sample)
+         if (m_mode == AppendMode::Sequence) {
+             // Use the generated timestamps instead of the sample's timestamps.
+             sample.setTimestamps(presentationTimestamp, decodeTimestamp);
+-        } else if (m_timestampOffset) {
++        } 
++	#if 0
++	 else if (m_timestampOffset) {
+             // Reflect the timestamp offset into the sample.
+             sample.offsetTimestampsBy(m_timestampOffset);
+         }
++	#endif
+ 
+         // 1.7 Let frame end timestamp equal the sum of presentation timestamp and frame duration.
+         MediaTime frameEndTimestamp = presentationTimestamp + frameDuration;
+-- 
+2.7.4
+
