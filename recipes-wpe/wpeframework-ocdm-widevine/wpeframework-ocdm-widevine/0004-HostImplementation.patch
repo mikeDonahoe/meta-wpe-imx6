@@ -1,0 +1,154 @@
+From 4b875c2c9feac97e0c952918dbad1ed8a412b81b Mon Sep 17 00:00:00 2001
+From: Michael Donahoe <michael.donahoe@systematicgroup.com>
+Date: Fri, 12 Jul 2019 18:59:09 +0000
+Subject: [PATCH 4/4] HostImplementation
+
+---
+ HostImplementation.cpp | 108 +++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 77 insertions(+), 31 deletions(-)
+
+diff --git a/HostImplementation.cpp b/HostImplementation.cpp
+index 7972038..9baef4b 100644
+--- a/HostImplementation.cpp
++++ b/HostImplementation.cpp
+@@ -1,6 +1,6 @@
+ #include "HostImplementation.h"
+ #include "DeviceCertificate.h"
+-
++#include <fstream>
+ using namespace widevine;
+ using namespace WPEFramework;
+ 
+@@ -35,53 +35,99 @@ int HostImplementation::NumTimers() const {
+ // widevine::Cdm::IStorage implementation
+ // ---------------------------------------------------------------------------
+ /* virtual */ bool HostImplementation::read(const std::string& name, std::string* data) {
+-  StorageMap::iterator it = _files.find(name);
+-  bool ok = it != _files.end();
+-  TRACE_L1("read file: %s: %s", name.c_str(), ok ? "ok" : "fail");
+-  if (!ok) return false;
+-  *data = it->second;
++  int strsize = 0;
++  FILE *fptr = NULL;
++  char fullPath[512];
++  bool retval = false;
++  std::ifstream ifs;
++  std::stringstream strStream;
++
++  if(!exists(name))
++  {
++     fprintf(stderr, "read call for file that does not exist %s\n",name.c_str());
++     return false;
++  }
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  ifs.open(fullPath,std::ofstream::out);
++  if(ifs.is_open())
++  {
++    strStream << ifs.rdbuf();
++    *data = strStream.str();
++    ifs.close();
++  }
+   return true;
+ }
+ 
+ /* virtual */ bool HostImplementation::write(const std::string& name, const std::string& data) {
+-  TRACE_L1("write file: %s", name.c_str());
+-  _files[name] = data;
+-  if (_saveDeviceCert && kCertificateFilename.compare(name) == 0) {
+-    _saveDeviceCert = false;
+-  }
+-  return true;
++  char fullPath[256];
++  std::ofstream ofs;
++
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  fprintf(stderr, "IStorage write %s\n",name.c_str());
++  ofs.open(fullPath,std::ofstream::out);
++  if(ofs.is_open())
++  {
++     ofs << data;
++     ofs.close();
++   } else {
++     return false;
++   }
++
++   return true;
+ }
+ 
+ /* virtual */ bool HostImplementation::exists(const std::string& name) {
+-  StorageMap::iterator it = _files.find(name);
+-  bool ok = it != _files.end();
+-  TRACE_L1("exists? %s: %s", name.c_str(), ok ? "true" : "false");
+-  return ok;
++   struct stat buffer;
++   char fullPath[512];
++   bool exists = false;
++
++   snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++   exists = (stat (fullPath, &buffer) == 0);
++   fprintf(stderr, "Widevine exists %s %d\n",fullPath, exists);
++   return exists;
+ }
+ 
+ /* virtual */ bool HostImplementation::remove(const std::string& name) {
+   TRACE_L1("remove: %s", name.c_str());
+-  if (name.empty()) {
+-    // If no name, delete all files (see DeviceFiles::DeleteAllFiles())
+-    _files.clear();
+-  } else {
+-    _files.erase(name);
+-  }
+-  return true;
++  char fullPath[512];
++ 
++  snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++  fprintf(stderr, "Widevine remove %s\n",fullPath);
++
++  if (!exists(name)) return false;
++   return (remove(fullPath) == 0);
+ }
+ 
+ /* virtual */ int32_t HostImplementation::size(const std::string& name) {
+-  StorageMap::iterator it = _files.find(name);
+-  if (it == _files.end()) return -1;
+-  return it->second.size();
++   int size = 0;
++   FILE *fptr = NULL;
++   char fullPath[512];
++ 
++   snprintf(fullPath,sizeof(fullPath),"/widevine/istorage/%s",name.c_str());
++   fptr = fopen(fullPath, "r");
++
++   if(fptr != NULL)
++   {
++      fseek(fptr,0,SEEK_END);
++      size = (int)ftell(fptr);
++      fclose(fptr);
++   }
++
++   fprintf(stderr, "Istorage fileSize %s %d\n",fullPath, size);
++
++   return size;
+ }
+ 
+ /* virtual */ bool HostImplementation::list(std::vector<std::string>* names) {
+-  names->clear();
+-  for (StorageMap::iterator it = _files.begin(); it != _files.end(); it++) {
+-      names->push_back(it->first);
+-  }
+-  return true;
++   DIR* dirp = opendir("/widevine/istorage/");
++   struct dirent * dp;
++  
++   while ((dp = readdir(dirp)) != NULL) {
++          fprintf(stderr, "List name %s\n",dp->d_name);
++          names->push_back(dp->d_name);
++   }
++
++   closedir(dirp);
+ }
+ 
+ // widevine::Cdm::IClock implementation
+-- 
+2.7.4
+
